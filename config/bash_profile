@@ -1,0 +1,62 @@
+# .bash_profile
+###############################################################################
+# This profile file is made for UW Hyak.
+
+
+# Paths =======================================================================
+
+# Scrubbed directory:
+export SCRUBBED_ROOT="/gscratch/scrubbed"
+export SCRUBBED="${SCRUBBED_ROOT}/{$USER}"
+# Make sure that directory exists:
+if ! [ -d "${SCRUBBED}" ]
+then mkdir -p "${SCRUBBED}"
+     chgrp "nbenlab" "${SCRUBBED}"
+     # Make non-readable for non-group members.
+     chmod 750 "${SCRUBBED}"
+fi
+
+# Singularity:
+export APPTAINER_CACHEDIR="${SCRUBBED}/.cache/apptainer"
+# Make sure it exists.
+if ! [ -d "${APPTAINER_CACHEDIR}" ]
+then mkdir -p "${APPTAINER_CACHEDIR}"
+fi
+
+# Lab:
+export NBENLAB_HOME="/gscratch/nbenlab"
+export NBENLAB_SCRUBBED="${SCRUBBED_ROOT}/nbenlab"
+# Make sure the nbenlab scrubbed directory exists and has the right permissions.
+if ! [ -d "${NBENLAB_SCRUBBED}" ]
+then mkdir -p "${NBENLAB_SCRUBBED}"
+     chgrp "nbenlab" "${NBENLAB_SCRUBBED}"
+     chmod 770 "${NBENLAB_SCRUBBED}"
+     chmod g+S "${NBENLAB_SCRUBBED}"
+fi
+export NBENLAB_TMPDIR="${NBENLAB_SCRUBBED}/tmp"
+if ! [ -d "${NBENLAB_TMPDIR}" ]
+then mkdir -p "${NBENLAB_TMPDIR}"
+     chgrp "nbenlab" "${NBENLAB_TMPDIR}"
+     chmod 770 "${NBENLAB_TMPDIR}"
+     chmod g+S "${NBENLAB_TMPDIR}"
+fi
+if [ -d "${NBENLAB_HOME}/bin" ]
+then export PATH="${NBENLAB_HOME}/bin:${PATH}"
+fi
+
+# Local bin path:
+if [ -d "${HOME}/bin" ]
+then export PATH="${HOME}/bin:${PATH}"
+fi
+if ! [ -d "${HOME}/.local/bin" ]
+then mkdir -p "${HOME}/.local/bin"
+fi
+export PATH="${HOME}/bin:${PATH}"
+
+
+# Imports =====================================================================
+
+# Get the aliases and functions
+if [ -f ~/.bashrc ]
+then source ~/.bashrc
+fi
