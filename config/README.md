@@ -32,3 +32,30 @@ permissions.
 The profile also adds the `~/bin`, `~/.local/bin`, and
 `${NBENLAB_HOME}/bin` directories to your path.
 
+
+## GNU Screen
+
+The [GNU Screen software tool](https://www.gnu.org/software/screen/) is a
+useful way to keep a command or session running on Hyak after you log out.  By
+running `screen` or `screen <COMMAND...>` you can start a screen instance that
+stays running even when you log out. Interacting with screen is mostly
+straightforward, but see [this screen cheatsheet](
+https://vhernando.github.io/gnu-screen-quick-guide-cheatsheet) for a guide.
+
+Note that one typically sends commands to screen using `CONTROL+a` followed by
+another key sequence. If you use emacs or are a fan of the `^a` keybinding for
+moving the cursor to the beginning of a line, then this keybinding is a
+pain. For this reason, the `screenrc` file included here remaps the screen
+control sequence to `CONTROL+o`. To send a literal `^o` you can press
+`CONTROL+o` then `o` in sequence.
+
+The `screenrc` file should be copied to `~/.screenrc` if you want to use it.
+
+
+## Neuropythy
+
+If you use [neuropythy](https://github.com/noahbenson/neuropythy), the
+`npythyrc.json` file can be copied to `~/.npythyrc` (no JSON ending). This file
+sets up neuropythy to know where to store its various datasets (in
+`/gscratch/nbenlab/data`) so that we can share downloads. To access HCP data
+you will still need to put your AWS credentials in th `~/.hcp-passwd` file.

@@ -54,6 +54,16 @@ fi
 export PATH="${HOME}/bin:${PATH}"
 
 
+# Permissions =================================================================
+
+# Set the umask such that directories are by default created with 775
+# permissions (i.e., user and group can read/write/execute); this is mostly
+# because if you create directories in the shared `/gscratch/nbenlab`
+# directories, they aren't group writeable by default, which can cause problems
+# when we share directories.
+umask 002
+
+
 # Imports =====================================================================
 
 # Get the aliases and functions
