@@ -11,6 +11,18 @@ instructions for most basic use cases (submitting jobs, examining
 allocations, etc.).
 
 
+## This Repository
+
+This repository contains a few useful items for Hyak:
+
+* The `config/` directory contains (optional) configuration files that
+  can be useful on Hyak.
+* The `scripts/` directory contains BASH scripts. These should be
+  already installed in the `bin` directory in the `nbenlab`'s
+  `/gscratch` space. If you use the `bash_profile` in the `config/`
+  directory, the commands should be available to you automatically.
+
+
 ## Hyak SSH Setup
 
 [SSH](https://en.wikipedia.org/wiki/Secure_Shell) is the preferred

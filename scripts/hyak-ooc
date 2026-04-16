@@ -1,0 +1,160 @@
+#! /usr/bin/env bash
+###############################################################################
+# Script for starting an ooc (Ollama/OpenCode) session.
+# Meant to run on UW Hyak.
+
+
+# Configuration ===============================================================
+
+# Relevant paths (or default values):
+GROUP_ROOT="/gscratch/nbenlab"
+OPT_PATH="${GROUP_ROOT}/opt"
+OC_BIN_PATH="${OPT_PATH}/opencode/bin"
+OOC_APPTAINER_DIR="${OOC_APPTAINER_PATH:-${GROUP_ROOT}/apptainer/ooc}"
+OOC_TEMP_DIR="${OOC_TEMP_DIR:-${GROUP_ROOT}/tmp}"
+OLLAMA_LOGFILE="${OLLAMA_LOGFILE:-/dev/null}"
+export OLLAMA_MODELS="${OLLAMA_MODELS:-${OPT_PATH}/ollama/models}"
+export OOC_SIF="${OOC_APPTAINER_DIR}/ooc.sif"
+
+# Workspace Directory.
+export OOC_WORK_DIR="${OOC_WORK_DIR:-/gscratch/nbenlab/scratch}"
+
+# The screen instance tag.
+OOC_TAG="${OOC_TAG:-ooc}"
+
+# A few scheduler defaults:
+export SLURM_ACCOUNT="${SLURM_ACCOUNT:-nbenlab}"
+export SLURM_PARTITION="${SLURM_PARTITION:-gpu-l40s}"
+export SLURM_NODES="${SLURM_NODES:-1}"
+export SLURM_GPUS="${SLURM_GPUS:-1}"
+export SLURM_MEM_PER_NODE="${SLURM_MEM_PER_NODE:-128G}"
+export SLURM_CPUS_PER_NODE="${SLURM_CPUS_PER_NODE:-8}"
+
+
+# Make sure we have a tmp directory ===========================================
+
+NBENLAB_SCRUBBED_DIR="/gscratch/scrubbed/nbenlab"
+NBENLAB_TMP_DIR="${NBENLAB_TMP_DIR:-${NBENLAB_SCRUBBED_DIR}/tmp}"
+if ! [ -d "${NBENLAB_SCRUBBED_DIR}" ]
+then mkdir -p "${NBENLAB_SCRUBBED_DIR}"
+     chgrp nbenlab "${NBENLAB_SCRUBBED_DIR}"
+     chmod g+S "${NBENLAB_SCRUBBED_DIR}"
+     chmod 775 "${NBENLAB_SCRUBBED_DIR}"
+fi
+if ! [ -d "${NBENLAB_TMP_DIR}" ]
+then mkdir -p "${NBENLAB_TMP_DIR}"
+     chgrp nbenlab "${NBENLAB_TMP_DIR}"
+     chmod g+S "${NBENLAB_TMP_DIR}"
+     chmod 775 "${NBENLAB_TMP_DIR}"
+fi
+
+
+# Help Message ================================================================
+
+function HELP {
+cat <<EOF
+Syntax:  hyak-ooc --time=<TIME> [SLURM-ARGS] [--tag=<TAG>] [--config]
+
+The hyak-ooc command starts the Ollama-OpenCode (OOC) server on a Hyak node
+under the nbenlab account. SLURM options can be passed as command-line
+arguments or as environment variables. The time command-line option is required
+if you want to make sure your job isn't immediately canceled.
+
+The command allocates a node and connects to it in a GNU screen session, which
+is automatically attached. The screen session should contain two windows: one
+running the Ollama server and one running OpenCode.
+
+The --tag option can be used to name the screen session that is started; the
+default name is 'ooc'.
+
+The --config option should be used if it's your first time running OpenCode.
+EOF
+}
+
+
+# Parse Arguments =============================================================
+
+# Basically just the option to give it a tag for the screen then any other arg
+# is assumed to be for the scheduler...
+POSARGS=()
+while [ "${#@}" -gt 0 ]
+do ARG="$1"
+   shift
+   case "$ARG"
+   in --help|-h)
+          HELP
+          exit 0
+          ;;
+      --tag=*)
+          OOC_TAG="${ARG:6}"
+          ;;
+      --tag)
+          OOC_TAG="$1"
+          shift
+          ;;
+      --ollama-log=*)
+          OLLAMA_LOGFILE="${ARG:13}"
+          ;;
+      --config)
+          OC_CONFIG="--config"
+          ;;
+      *)
+          POSARGS+=("$ARG")
+          ;;
+   esac
+done
+
+
+# Run OOC =====================================================================
+
+# First, start the session. We want to:
+#  (1) run the salloc command in a screen,
+#  (2) have it print out the hostname, then
+#  (3) have it then start ollama server.
+# To read the hostname we use a trick: we have it print hostname into a
+# temporary file then start ollama; we read the temporary file after a short
+# delay.
+
+# First step is to make a temporary file.
+export OOC_TMPFILE="$(mktemp "${NBENLAB_TMP_DIR}/ooc-host.XXXXXX")"
+
+# Next, start a screen with the requested tag.
+export OOC_WORK_DIR OOC_SIF OC_CONFIG
+export PATH="${OC_BIN_PATH}:${PATH}"
+screen -dmS "${OOC_TAG}" \
+   -- srun "${POSARGS[@]}" \
+   -- bash -c '
+      hostname > "${OOC_TMPFILE}" &&
+      apptainer exec --nv \
+         --bind "${OLLAMA_MODELS}" \
+         "${OOC_SIF}" \
+         ollama serve &&
+      echo &&
+      echo &&
+      read -n 1 -s -r -p \"Press any key to continue...\"'
+echo "Started screen: ${OOC_TAG}"
+
+# Then, wait for the hostname to appear.
+echo "Waiting for ollama server to start..."
+read OOC_HOST < <(tail -f "${OOC_TMPFILE}")
+echo "Ollama server running on host ${OOC_HOST}."
+
+# Next, start OpenCode in a new screen.
+echo "Starting OpenCode in screen ${OOC_TAG}..."
+screen -S "${OOC_TAG}" -X screen \
+       -- bash -c "
+          export OLLAMA_MODELS='${OLLAMA_MODELS}'
+          echo 'Starting apptainer shell. To run opencode on this node, run:'
+          echo '  ollama launch opencode [--config]'
+          echo
+          ssh -t '${OOC_HOST}' -- \
+             apptainer shell --nv \
+	        --bind '${OOC_WORK_DIR}' \
+                --bind '${OC_BIN_PATH}' \
+                --bind '${OLLAMA_MODELS}' \
+                '${OOC_SIF}'
+          read -n 1 -s -r -p 'Press any key to continue...'"
+
+# Exec screen to finish up!
+exec screen -x "${OOC_TAG}"
+
