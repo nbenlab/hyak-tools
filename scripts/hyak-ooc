@@ -98,6 +98,13 @@ do ARG="$1"
       --config)
           OC_CONFIG="--config"
           ;;
+      --work=*)
+          OOC_WORK_DIR="${ARG:7}"
+          ;;
+      --work)
+          OOC_WORK_DIR="$1"
+          shift
+          ;;
       *)
           POSARGS+=("$ARG")
           ;;

@@ -7,7 +7,7 @@
 
 # Scrubbed directory:
 export SCRUBBED_ROOT="/gscratch/scrubbed"
-export SCRUBBED="${SCRUBBED_ROOT}/{$USER}"
+export SCRUBBED="${SCRUBBED_ROOT}/${USER}"
 # Make sure that directory exists:
 if ! [ -d "${SCRUBBED}" ]
 then mkdir -p "${SCRUBBED}"
