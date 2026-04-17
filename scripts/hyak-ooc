@@ -7,12 +7,10 @@
 # Configuration ===============================================================
 
 # Relevant paths (or default values):
-GROUP_ROOT="/gscratch/nbenlab"
-OPT_PATH="${GROUP_ROOT}/opt"
+NBENLAB_HOME="${NBENLAB_HOME:-/gscratch/nbenlab}"
+OPT_PATH="${NBENLAB_HOME}/opt"
 OC_BIN_PATH="${OPT_PATH}/opencode/bin"
-OOC_APPTAINER_DIR="${OOC_APPTAINER_PATH:-${GROUP_ROOT}/apptainer/ooc}"
-OOC_TEMP_DIR="${OOC_TEMP_DIR:-${GROUP_ROOT}/tmp}"
-OLLAMA_LOGFILE="${OLLAMA_LOGFILE:-/dev/null}"
+OOC_APPTAINER_DIR="${OOC_APPTAINER_PATH:-${NBENLAB_HOME}/apptainer/ooc}"
 export OLLAMA_MODELS="${OLLAMA_MODELS:-${OPT_PATH}/ollama/models}"
 export OOC_SIF="${OOC_APPTAINER_DIR}/ooc.sif"
 
@@ -21,6 +19,11 @@ export OOC_WORK_DIR="${OOC_WORK_DIR:-/gscratch/nbenlab/scratch}"
 
 # The screen instance tag.
 OOC_TAG="${OOC_TAG:-ooc}"
+
+# If the --server option is given, we forward the OpenCode port to a domain
+# socket.
+OC_PORT="${OC_PORT:-4096}"
+OC_SOCK="${OC_SOCK:-${HOME}/.ooc/tunnels/opencode.sock}"
 
 # A few scheduler defaults:
 export SLURM_ACCOUNT="${SLURM_ACCOUNT:-nbenlab}"
@@ -38,14 +41,14 @@ NBENLAB_TMP_DIR="${NBENLAB_TMP_DIR:-${NBENLAB_SCRUBBED_DIR}/tmp}"
 if ! [ -d "${NBENLAB_SCRUBBED_DIR}" ]
 then mkdir -p "${NBENLAB_SCRUBBED_DIR}"
      chgrp nbenlab "${NBENLAB_SCRUBBED_DIR}"
-     chmod g+S "${NBENLAB_SCRUBBED_DIR}"
-     chmod 775 "${NBENLAB_SCRUBBED_DIR}"
+     chmod g+s "${NBENLAB_SCRUBBED_DIR}"
+     chmod 770 "${NBENLAB_SCRUBBED_DIR}"
 fi
 if ! [ -d "${NBENLAB_TMP_DIR}" ]
 then mkdir -p "${NBENLAB_TMP_DIR}"
      chgrp nbenlab "${NBENLAB_TMP_DIR}"
-     chmod g+S "${NBENLAB_TMP_DIR}"
-     chmod 775 "${NBENLAB_TMP_DIR}"
+     chmod g+s "${NBENLAB_TMP_DIR}"
+     chmod 770 "${NBENLAB_TMP_DIR}"
 fi
 
 
@@ -53,7 +56,7 @@ fi
 
 function HELP {
 cat <<EOF
-Syntax:  hyak-ooc --time=<TIME> [SLURM-ARGS] [--tag=<TAG>] [--config]
+Syntax: hyak-ooc --time=<TIME> [SLURM-ARGS] [--tag=<TAG>] [--config] [--server]
 
 The hyak-ooc command starts the Ollama-OpenCode (OOC) server on a Hyak node
 under the nbenlab account. SLURM options can be passed as command-line
@@ -76,6 +79,8 @@ EOF
 
 # Basically just the option to give it a tag for the screen then any other arg
 # is assumed to be for the scheduler...
+OC_CONFIG=""
+OC_SERVER=""
 POSARGS=()
 while [ "${#@}" -gt 0 ]
 do ARG="$1"
@@ -92,17 +97,26 @@ do ARG="$1"
           OOC_TAG="$1"
           shift
           ;;
-      --ollama-log=*)
-          OLLAMA_LOGFILE="${ARG:13}"
-          ;;
       --config)
           OC_CONFIG="--config"
+          echo "!!!"
+          exit 2
+          ;;
+      --server)
+          OC_SERVER="1"
           ;;
       --work=*)
           OOC_WORK_DIR="${ARG:7}"
           ;;
       --work)
           OOC_WORK_DIR="$1"
+          shift
+          ;;
+      --port=*)
+          OC_PORT="${ARG:7}"
+          ;;
+      --port)
+          OC_PORT="$1"
           shift
           ;;
       *)
@@ -112,7 +126,22 @@ do ARG="$1"
 done
 
 
+# Sanity Checks ===============================================================
+
+if [ -n "${OC_CONFIG}" ] 
+then if [ -n "${OC_SERVER}" ]
+     then echo "Only one of --config and --server can be used at a time."
+          exit 1
+     else OC_CMD="ollama launch opencode --config"
+     fi
+elif [ -n "${OC_SERVER}" ]
+then OC_CMD="opencode server --port ${OC_PORT}"
+else OC_CMD="ollama launch opencode"
+fi
+
+
 # Run OOC =====================================================================
+
 
 # First, start the session. We want to:
 #  (1) run the salloc command in a screen,
@@ -139,6 +168,8 @@ screen -dmS "${OOC_TAG}" \
       echo &&
       echo &&
       read -n 1 -s -r -p \"Press any key to continue...\"'
+screen -S "${OOC_TAG}" -X title "Ollama Server"
+
 echo "Started screen: ${OOC_TAG}"
 
 # Then, wait for the hostname to appear.
@@ -146,22 +177,64 @@ echo "Waiting for ollama server to start..."
 read OOC_HOST < <(tail -f "${OOC_TMPFILE}")
 echo "Ollama server running on host ${OOC_HOST}."
 
-# Next, start OpenCode in a new screen.
+# Make a simple BASH prompt on that server.
+screen -S "${OOC_TAG}" -X screen \
+       ssh -t "${OOC_HOST}" \
+       "bash -c '
+          export OLLAMA_MODELS=\"${OLLAMA_MODELS}\"
+          oocsh() {
+             apptainer shell --contain \
+                --bind \"${OOC_WORK_DIR}\" \
+                --bind \"${OC_BIN_PATH}\" \
+                --bind \"${HOME}/.opencode\" \
+                --bind \"${HOME}/.config/opencode\" \
+                --bind \"${OLLAMA_MODELS}\" \
+                \"${OOC_SIF}\"
+          }
+          export -f oocsh
+          echo \"This window is SSHed into the worker node (${OOC_HOST}).\"
+          echo \"You can use the alias oocsh to start a shell in the OOC apptainer.\"
+          echo
+          exec bash -i'"
+screen -S "${OOC_TAG}" -X title "Node SSH"
+
+# Next, start OpenCode (contained, so it can't muck with the home directory or
+# anything) in a new screen.
 echo "Starting OpenCode in screen ${OOC_TAG}..."
 screen -S "${OOC_TAG}" -X screen \
-       -- bash -c "
-          export OLLAMA_MODELS='${OLLAMA_MODELS}'
-          echo 'Starting apptainer shell. To run opencode on this node, run:'
-          echo '  ollama launch opencode [--config]'
-          echo
-          ssh -t '${OOC_HOST}' -- \
-             apptainer shell --nv \
-	        --bind '${OOC_WORK_DIR}' \
-                --bind '${OC_BIN_PATH}' \
-                --bind '${OLLAMA_MODELS}' \
-                '${OOC_SIF}'
-          read -n 1 -s -r -p 'Press any key to continue...'"
+       ssh -t "${OOC_HOST}" \
+       "bash -c '
+          export OLLAMA_MODELS=\"${OLLAMA_MODELS}\"
+          cd \"${OOC_WORK_DIR}\"
+          echo \"Waiting for Ollama...\"
+          until curl -s http://localhost:11434 > /dev/null
+          do sleep 2
+          done
+          if [ -n \"${OC_SERVER}\" ]
+          then echo \"Redirecting port ${OC_PORT} to ${OC_SOCK}.\"
+               apptainer exec --contain \"${OOC_SIF}\" \
+                  socat \"TCP-LISTEN:${OC_PORT},reuseaddr,fork\" \
+                        \"UNIX-CONNECT:${OC_SOCK}\" &>/dev/null &
+               SOCAT_PID=$!
+          else SOCAT_PID=''
+          fi
+          echo \"Starting OpenCode...\"
+          apptainer exec --contain \
+	        --bind \"${OOC_WORK_DIR}\" \
+                --bind \"${OC_BIN_PATH}\" \
+                --bind \"${OLLAMA_MODELS}\" \
+                --bind \"${HOME}/.opencode\" \
+                --bind \"${HOME}/.config/opencode\" \
+                \"${OOC_SIF}\" ${OC_CMD}
+          if [ -n \"${SOCAT_PID}\" ]
+          then kill $SOCAT_PID
+          fi
+        ' && read -n 1 -s -r -p 'Press any key to continue...'"
+screen -S "${OOC_TAG}" -X title "OpenCode"
 
 # Exec screen to finish up!
-exec screen -x "${OOC_TAG}"
+if [ -z "${OC_SERVER}" ]
+then exec screen -x "${OOC_TAG}" -p 1
+else echo "OpenClaw server started!"
+fi
 

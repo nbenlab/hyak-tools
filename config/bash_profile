@@ -16,33 +16,37 @@ then mkdir -p "${SCRUBBED}"
      chmod 750 "${SCRUBBED}"
 fi
 
-# Singularity:
-export APPTAINER_CACHEDIR="${SCRUBBED}/.cache/apptainer"
-# Make sure it exists.
-if ! [ -d "${APPTAINER_CACHEDIR}" ]
-then mkdir -p "${APPTAINER_CACHEDIR}"
-fi
-
 # Lab:
 export NBENLAB_HOME="/gscratch/nbenlab"
 export NBENLAB_SCRUBBED="${SCRUBBED_ROOT}/nbenlab"
-# Make sure the nbenlab scrubbed directory exists and has the right permissions.
+# Make sure the nbenlab scrubbed directory exists and has the right
+# permissions.
 if ! [ -d "${NBENLAB_SCRUBBED}" ]
 then mkdir -p "${NBENLAB_SCRUBBED}"
      chgrp "nbenlab" "${NBENLAB_SCRUBBED}"
      chmod 770 "${NBENLAB_SCRUBBED}"
-     chmod g+S "${NBENLAB_SCRUBBED}"
+     chmod g+s "${NBENLAB_SCRUBBED}"
 fi
 export NBENLAB_TMPDIR="${NBENLAB_SCRUBBED}/tmp"
 if ! [ -d "${NBENLAB_TMPDIR}" ]
 then mkdir -p "${NBENLAB_TMPDIR}"
      chgrp "nbenlab" "${NBENLAB_TMPDIR}"
      chmod 770 "${NBENLAB_TMPDIR}"
-     chmod g+S "${NBENLAB_TMPDIR}"
+     chmod g+s "${NBENLAB_TMPDIR}"
 fi
 if [ -d "${NBENLAB_HOME}/bin" ]
 then export PATH="${NBENLAB_HOME}/bin:${PATH}"
 fi
+
+# Singularity/Apptainer:
+export APPTAINER_CACHEDIR="${SCRUBBED}/.cache/apptainer"
+# Make sure it exists.
+if ! [ -d "${APPTAINER_CACHEDIR}" ]
+then mkdir -p "${APPTAINER_CACHEDIR}"
+fi
+# Where to put/find shared apptainer images:
+export APPTPATH="${NBENLAB_HOME}/apptainer"
+
 
 # Local bin path:
 if [ -d "${HOME}/bin" ]
