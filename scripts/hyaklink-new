@@ -1,0 +1,442 @@
+#! /usr/bin/env bash
+###############################################################################
+# Scipt to allocate a node and manage a screen instance on it.
+# This script was written for the nbenlab hyak account, but you can easily
+# update this for a different account using the configuration section.
+
+
+# Configuration ===============================================================
+
+# Load the hyaklink-init script.
+THISSCRIPT="$(command -v "${BASH_SOURCE[0]}")"
+THISDIR="$(dirname "${THISSCRIPT}")"
+source "${THISDIR}/hyaklink-init"
+
+# The help / syntax function.
+function HELP {
+    less <<EOF
+The hyaklink-new subcommand is a convenience command for allocating UW Hyak
+nodes through its SLURM system. The idea behind this command is that one
+typically wants to start some number of shells running different tools
+(potentially simultaneously) on the remote host, allocated via SLURM,
+potentially with some connections, like ports, mapped back to the login host.
+This subcommand of the hyaklink command creates such allocations and links.
+
+The 'hyaklink start' and 'hyaklink new' are equivalent comands except that the
+former attaches the screen in the remote host at the end of the command while
+the latter simply allocates the node and creates the screen then exits. These
+commands take the following options:
+
+  --port <port-spec> | --port=<port-spec>
+  The a port is always specified as a '<local>:<remote>' link. Either of these
+  may be a filename (for a unix domain socket) or a port number. Many ports may
+  be given on a single start or new command, and all ports are reopened when a
+  link is opened or resumed.
+
+  --config-dir <directory> | --config-dir=<directory>
+  If one wishes to use a specific directory for storing hyaklink connection
+  metadata, provide it via this option. The default configuration directory is
+  $HOME/.hyak/hyaklink
+
+  --command <command-string> | --comand=<command-string>
+  Provide a command string for the shell to run on the allocated node. The
+  command-string should be understood as in 'bash -c "command-string"'.
+
+  --
+  Any arguments appearing after the -- form a command that is to be executed on
+  the allocated node in the initial screen window. This is an alternative to
+  providing a '--command' argument. If neither is provided, then the shell is
+  run interactively without a command.
+
+Additionally, the following sbatch options are accepted by the script. Note
+that the associated SBATCH_ environment variables are also respected for these
+arguments.
+  --time|-t       Allocation duration (required).
+  --cpus|-c       Number of CPUs on the allocated node (default 8).
+  --gpus|-G       Number of GPUs on the allocated node (default 0).
+  --mem|-m        Memory on the allocated node (default: 32G).
+  --account|-A    Account (default: nbenlab).
+  --partition|-p  Partition (default: gpu-l40s).
+  --chdir|-D      Run directory on the node.
+  --job-name|-J   Name of the job.
+  --nice          Nice-level of the job.
+
+Either the --time|-t command line option or the SBATCH_TIMELIMIT environment
+variable must be provided, otherwise an error message is printed.
+
+Finally, a single positional argument is accepted (and must apear prior to the
+-- argument), which may be used in place of the job-name option to set the
+name of the job that is being started.
+EOF
+}
+
+# These variables have default values, but previously set values are respected.
+export SBATCH_CPUS_PER_TASK="${SBATCH_CPUS_PER_TASK:-8}"
+export SBATCH_GPUS_PER_TASK="${SBATCH_GPUS_PER_TASK:-0}"
+export SBATCH_MEM_PER_NODE="${SBATCH_MEM_PER_NODE:-32G}"
+export SBATCH_ACCOUNT="${SBATCH_ACCOUNT:-${SLURM_ACCOUNT:-nbenlab}}"
+export SBATCH_PARTITION="${SBATCH_PARTITION:-${SLURM_PARTITION:-gpu-l40x}}"
+
+# These variables don't respect their input values. This script doesn't do
+# array jobs or multiple tasks/nodes.
+export SBATCH_NNODES=1
+export SBATCH_NTASKS=1
+
+# We only allow a single tag to be set by command line; we give this variable
+# a value once it's been found in the argument list.
+TAG_SET=""
+
+
+# Arguments ===================================================================
+
+# Check for arguments we specifically take.
+CMD=()
+SBATCH_ARGS=()
+HYAKLINK_PORTS=()
+while [ $# -gt 0 ]
+do case "$1"
+   in # The hyaklink options (just the ports):
+      --port|-P)
+          shift
+          HYAKLINK_PORTS+=("${1}")
+          ;;
+      --port=*)
+          HYAKLINK_PORTS+=("${1:7}")
+          ;;
+      -P*)
+          HYAKLINK_PORTS+=("${1:2}")
+          ;;
+      # The SLURM options.
+      --mem|-m)
+          shift
+          SLURM_ARGS+=("--mem=$1")
+          ;;
+      --mem=*)
+          SLURM_ARGS+=("$1")
+          ;;
+      -m*)
+          SLURM_ARGS+=("--mem=${1:2}")
+          ;;
+      --cpus|-c)
+          shift
+          SLURM_ARGS+=("--cpus-per-task=${1}")
+          ;;
+      --cpus=*)
+          SLURM_ARGS+=("--cpus-per-task=${1:7}")
+          ;;
+      -c*)
+          SLURM_ARGS+=("--cpus-per-task=${1:2}")
+          ;;
+      --gpus|-G)
+          shift
+          SLURM_ARGS+=("--gpus=${1}")
+          ;;
+      --gpus=*)
+          SLURM_ARGS+=("--gpus=${1:7}")
+          ;;
+      -G*)
+          SLURM_ARGS+=("--gpus=${1:2}")
+          ;;
+      --account|-A)
+          shift
+          SLURM_ARGS+=("--account=$1")
+          ;;
+      --account=*)
+          SLURM_ARGS+=("$1")
+          ;;
+      -A*)
+          SLURM_ARGS+=("--account=${1:2}")
+          ;;
+      --partition|-p)
+          shift
+          SLURM_ARGS+=("--partition=$1")
+          ;;
+      --partition=*)
+          SLURM_ARGS+=("$1")
+          ;;
+      -p*)
+          SLURM_ARGS+=("--partition=${1:2}")
+          ;;
+      --time|-t)
+          shift
+          SBATCH_TIMELIMIT="$1"
+          SLURM_ARGS+=("--time=$1")
+          ;;
+      --time=*)
+          SBATCH_TIMELIMIT="${1:7}"
+          SLURM_ARGS+=("$1")
+          ;;
+      -t*)
+          SBATCH_TIMELIMIT="${1:2}"
+          SLURM_ARGS+=("--time=${1:2}")
+          ;;
+      --chdir|-D)
+          shift
+          SLURM_ARGS+=("--chdir=$1")
+          ;;
+      --chdir=*)
+          SLURM_ARGS+=("$1")
+          ;;
+      -D*)
+          SLURM_ARGS+=("--chdir=${1:2}")
+          ;;
+      --export)
+          shift
+          SLURM_ARGS+=("--export=$1")
+          ;;
+      --export=*)
+          SLURM_ARGS+=("$1")
+          ;;
+      --export-file)
+          shift
+          SLURM_ARGS+=("--export-file=$1")
+          ;;
+      --export-file=*)
+          SLURM_ARGS+=("$1")
+          ;;
+      --licenses|-L)
+          shift
+          SLURM_ARGS+=("--licenses=$1")
+          ;;
+      --licenses=*)
+          SLURM_ARGS+=("$1")
+          ;;
+      -L*)
+          SLURM_ARGS+=("--licenses=${1:2}")
+          ;;
+      --job-name|-J)
+          shift
+          export SBATCH_JOB_NAME="$1"
+          SLURM_ARGS+=("--job-name=$1")
+          ;;
+      --job-name=*)
+          export SBATCH_JOB_NAME="${1:11}"
+          SLURM_ARGS+=("$1")
+          ;;
+      -J*)
+          export SBATCH_JOB_NAME="${1:2}"
+          SLURM_ARGS+=("--job-name=${1:2}")
+          ;;
+      --nice)
+          SLURM_ARGS+=("$1")
+          ;;
+      --nice=*)
+          SLURM_ARGS+=("$1")
+          ;;
+      # If there is a --, then anything following the -- is run as a command in
+      # the shell that is spawned.
+      --)
+          # This indicates an end to optional arguments; the rest are for the
+          # command that runs in the new screen.
+          shift
+          CMD=("$@")
+          break
+          ;;
+      # If there is a --command or -C, then the following string is run like in
+      # a bash -c <string> command.
+      --command|-C)
+          shift
+          CMD=("bash", "-c", "$1")
+          ;;
+      --command=*)
+          CMD=("bash", "-c", "${1:10}")
+          ;;
+      -C*)
+          CMD=("bash", "-c", "${1:10}")
+          ;;
+      # Help:
+      --help|-h)
+          HELP
+          exit 0
+          ;;
+      # Anything else is a tag.
+      *)
+          if [ -z "${TAG_SET}" ]
+          then TAG="$1"
+               TAG_SET=yes
+          else echo "Invalid argument: $1" 1>&2
+               exit 1
+          fi
+          ;;
+   esac
+   shift
+done
+
+# At this point, if we haven't been given a job name, we create a random name
+# then rename the job once it's been created. However, we might have been given
+# A TAG or a SBATCH_JOB_NAME or both.
+if [ -n "${TAG}" ] && [ -n "${SBATCH_JOB_NAME}" ]
+then if [ "${TAG}" != "${SBATCH_JOB_NAME}" ]
+     then echo "TAG and SBATCH_JOB_NAME were both given:" 1>&2
+          echo "  SBATCH_JOB_NAME='${SBATCH_JOB_NAME}'" 1>&2
+          echo "  TAG='${TAG}'" 1>&2
+          exit 1
+     fi
+elif [ -z "${SBATCH_JOB_NAME}" ]
+then SBATCH_JOB_NAME="${TAG}"
+fi
+# This lets us name the job after the host.
+if [ -z "$SBATCH_JOB_NAME" ]
+then JOB_NAME_RANDOM=yes
+     SBATCH_JOB_NAME="$(tr -dc 'A-Za-z0-9' < /dev/urandom | head -c 16; echo)"
+     SBATCH_JOB_NAME="hyaknode-${SBATCH_JOB_NAME}"
+else JOB_NAME_RANDOM=""
+fi
+export SBATCH_JOB_NAME
+# TAG is a shortcut for the job name:
+export TAG="${SBATCH_JOB_NAME}"
+
+# If the command is empty, we have a default command as well.
+if [ "${#CMD[@]}" -eq 0 ]
+then CMD=("bash" "-i")
+fi
+
+# We need to prepare to save the node metadata in the ~/.hyak/hyaklink
+# configuration directory.  First make sure the directory exists.
+if ! [ -d "${HYAKLINK_CONFIG_DIR}" ]
+then mkdir -p "${HYAKLINK_CONFIG_DIR}"
+     chmod 700 "${HYAKLINK_CONFIG_DIR}"
+fi
+# This is the file we'll use.
+ENVFILE="${HYAKLINK_CONFIG_DIR}/${TAG}.env"
+# Make sure it doesn't already exist!
+if [ -a "${ENVFILE}" ]
+then echo "Job with given tag already exists: ${TAG}" 1>&2
+     exit 1
+fi
+
+# Make sure there's some kind of time limit specified.
+if [ -z "${SBATCH_TIMELIMIT}" ] && [ -n "${SLURM_TIMELIMIT}" ]
+then SBATCH_TIMELIMIT="${SLURM_TIMELIMIT}"
+fi
+if [ -z "${SBATCH_TIMELIMIT}" ]
+then echo "Neither SBATCH_TIMELIMIT nor --time | -t options were given;" 1>&2
+     echo "hyaklink must have a time limit to allocate a node." 1>&2
+     exit 1
+else export SBATCH_TIMELIMIT
+     export SLURM_TIMELIMIT="${SBATCH_TIMELIMIT}"
+fi
+
+
+# Allocate Node ===============================================================
+
+# We have the salloc command arguments already set up. We just need to create
+# the job. We allocate the node using sbatch because it lets us send along a
+# command without attaching locally.
+export SBATCH_NTASKS=1
+export SBATCH_NNODES=1
+printf -v CMDLINE "%q " "${CMD[@]}"
+export CMDLINE="${CMDLINE% }"
+
+sbatch --ntasks=1 -N1 "${SLURM_ARGS[@]}" <<EOF
+#! /usr/bin/env bash
+# First thing: we create our data file. If we're a random jobname, we start
+# by creating an appropriate name for the job and writing that name into the
+# envfile for our temporary job name.
+if [ -n "${JOB_NAME_RANDOM}" ]
+then export SLURM_JOB_NAME_INIT="\${SLURM_JOB_NAME}"
+     export SLURM_JOB_NAME="\$(hostname):\$(date +%Y%m%d%H%M%S)"
+     echo "\${SLURM_JOB_NAME}" > "${ENVFILE}"
+     # Rename the job also.
+     scontrol update job="\${SLURM_JOB_ID}" JobName="\${SLURM_JOB_NAME}"
+fi
+export ENVFILE="${HYAKLINK_CONFIG_DIR}/\${SLURM_JOB_NAME}.env"
+export TAG="\${SLURM_JOB_NAME}"
+# We also want to save our hostname.
+export SLURM_HOSTNAME="\$(hostname)"
+# We also want to save the ports.
+export SLURM_HYAKLINK_PORTS=(${HYAKLINK_PORTS[@]})
+# Now we write our output metadata from the file. If we were 
+env | grep '^SLURM_' > "\${ENVFILE}"
+# Make sure we delete that envfile on exit!
+function on_exit { 
+   rm -f "\${ENVFILE}"
+   screen -wipe &>/dev/null
+}
+trap on_exit EXIT
+
+# Go ahead and start the screen on this host.
+screen -dmS "\${TAG}" bash -c "
+   SLURM_MEM=\$((SLURM_MEM_PER_NODE * 1024 * 1024))
+   echo 'HyakLink Node Allocated:'
+   echo \" - Name / ID:         \$SLURM_JOB_NAME / \$SLURM_JOB_ID\"
+   echo \" - Account/Partition: \$SLURM_ACCOUNT / \$SLURM_PARTITION\"
+   echo \" - Host:              \$SLURM_HOSTNAME\"
+   echo \" - CPUs / GPUs:       \$SLURM_CPUS_ON_NODE / \${SLURM_GPUS_ON_NODE:-0}\"
+   echo \" - Memory:            \$(numfmt --to=iec \${SLURM_MEM})\"
+   echo
+   echo 'You are currently in a GNU Screen session. Press Control-a then d to'
+   echo 'detach back to the login node.'
+   echo
+   # Run the command!
+   exec ${CMDLINE}
+"
+# Change the prompt to show the time remaining.
+function update_screen_prompt {
+   NOW=\$(date +%s)
+   END=\${SLURM_JOB_END_TIME}
+   if [ \$END -le \$NOW ]
+   then endstr='%{=b KR}Expired!'
+   else rr=\$((END - NOW))
+        rh=\$((rr / 3600))
+        rm=\$(((rr % 3600) / 60))
+        endstr="%{=b Kb} \$(printf '%d:%02d:%02d' \$rh \$rm \$((rr%60)))"
+   fi
+   screen -S "\${TAG}" -X hardstatus alwayslastline \
+      "%{= Kb}%S %= %{= KW}%t %= %{= Kw}Job Time: \${endstr}" \
+      &> /dev/null
+}
+
+# Now just wait for the screen to end.
+while screen -list | grep -q "\.\${TAG}"
+do update_screen_prompt
+   sleep 1
+done
+
+# The job ends here.
+EOF
+
+# Okay, we've started the batch script. We're going to need to wait for the env
+# file to appear then read it. In fact, we may have to do that twice because we
+# might first have to do it for the temporary job name, so let's write a
+# function for it...
+function await_file {
+    # First, wait for the file...
+    while ! [ -r "$1" ]
+    do sleep 1
+    done
+}
+
+# If we used a random name, the first order of business is to get the new name.
+if [ -n "${JOB_NAME_RANDOM}" ]
+then await_file "${ENVFILE}"
+     TAG="$(cat "${ENVFILE}")"
+     rm -f "${ENVFILE}"  # Delete the temporary file.
+     ENVFILE="${HYAKLINK_CONFIG_DIR}/${TAG}.env"
+fi
+# Now we wait on then source the envfile to get all the SLURM job data.
+await_file "${ENVFILE}"
+source "${ENVFILE}"
+TAG="${SLURM_JOB_NAME}"
+
+# Finally print some info about the started job or fg the job.
+if [ -z "${HYAKLINK_START}" ] || [ "${HYAKLINK_START}" = "no" ]
+then SLURM_MEM=$((SLURM_MEM_PER_NODE * 1024 * 1024))
+     echo 'HyakLink Node Allocated:'
+     echo " - Name / ID:         ${SLURM_JOB_NAME} / ${SLURM_JOB_ID}"
+     echo " - Account/Partition: ${SLURM_ACCOUNT} / ${SLURM_PARTITION}"
+     echo " - Host:              ${SLURM_HOSTNAME}"
+     echo " - CPUs / GPUs:       ${SLURM_CPUS_ON_NODE:-0} / ${SLURM_GPUS_ON_NODE:-0}"
+     echo " - Memory:            $(numfmt --to=iec ${SLURM_MEM})"
+     echo " - Time Limit:        ${SLURM_TIMELIMIT}"
+     if [ ${#HYAKLINK_PORTS[@]} -gt 0 ]
+     then echo " - Ports:"
+          for port in "${HYAKLINK_PORTS[@]}"
+          do echo "   - ${port}"
+          done
+     fi
+     echo
+     echo "To resume this session, run \`hyaklink ${TAG}\`."
+     exit 0
+else exec hyaklink-fg --config-dir="${HYAKLINK_CONFIG_DIR}" "${TAG}"
+fi

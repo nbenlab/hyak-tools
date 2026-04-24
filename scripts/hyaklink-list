@@ -1,0 +1,98 @@
+#! /usr/bin/env bash
+###############################################################################
+# Script to list all currently open hyaklink connections.
+
+
+# Configuration ===============================================================
+
+# Load the hyaklink-init script.
+THISSCRIPT="$(command -v "${BASH_SOURCE[0]}")"
+THISDIR="$(dirname "${THISSCRIPT}")"
+source "${THISDIR}/hyaklink-init"
+
+# The help / syntax function.
+function HELP {
+    less <<EOF
+Syntax: hyaklink-list [--config-dir=<DIR>]
+
+The hyaklink-list subcommand lists all currently open hyaklinks.
+The following option can be provided:
+
+  --config-dir <directory> | --config-dir=<directory>
+  If one wishes to use a specific directory for storing hyaklink connection
+  metadata, provide it via this option. The default configuration directory is
+  $HOME/.hyak/hyaklink
+
+  --simple | -s
+  Just print the names of active hyaklinks, not other metadata.
+EOF
+}
+
+
+# Arguments ===================================================================
+
+# Check for arguments we specifically take.
+HYAKLINK_LIST_SIMPLE="no"
+while [ $# -gt 0 ]
+do case "$1"
+   in --simple|-s)
+          HYAKLINK_LIST_SIMPLE="yes"
+          ;;
+      # Anything else is an error.
+      *)
+          echo "Invalid argument: $1" 1>&2
+          exit 1
+          ;;
+   esac
+   shift
+done
+
+# We need to scan the hyaklink configuration directory for env files.
+if ! [ -d "${HYAKLINK_CONFIG_DIR}" ]
+then echo "No configuration directory found: ${HYAKLINK_CONFIG_DIR}" 1>&2
+     exit 1
+fi
+# Print a header if we're not listing in simple mode.
+FMT='%-12s %-18s %-9s %-20s %s\n'
+if [ "${HYAKLINK_LIST_SIMPLE}" = "no" ]
+then printf "${FMT}" "ID" "Name" "Node" "Start Time" "Time Remaining"
+fi
+if [ -z "$(compgen -G "${HYAKLINK_CONFIG_DIR}"/*.env)" ]
+then # This isn't an error, just means there are no jobs right now.
+     exit 0
+fi
+for envfile in "${HYAKLINK_CONFIG_DIR}"/*.env
+do TAG="$(basename "${envfile}" .env)"
+   # Make sure it still exists as a job; import it and query the job ID.
+   source "${envfile}"
+   if [ $(squeue -j${SLURM_JOB_ID} -h -t R 2>/dev/null | wc -l) -eq 0 ]
+   then # The job has ended, so move the file into the archive directory.
+        DATESTR=$(date -d"@${SLURM_JOB_START_TIME}" "+%Y%m%d%H%M%S")
+        ARCHNAME="${SLURM_JOB_ID}_${TAG}"
+        mkdir -p "${HYAKLINK_CONFIG_DIR}/job-archive"
+        mv "${envfile}" "${HYAKLINK_CONFIG_DIR}/job-archive/${ARCHNAME}.env"
+   else # The job is running, so list it.
+        if [ "${HYAKLINK_LIST_SIMPLE}" = "yes" ]
+        then echo "${TAG}"
+        else DATESTR=$(date -d"@${SLURM_JOB_START_TIME}" "+%Y-%m-%d %H:%M:%S")
+             # Compute the remaining time string...
+             NOW=$(date +%s)
+             rr=$((SLURM_JOB_END_TIME - NOW))
+             rh=$((rr / 3600))
+             rm=$(((rr % 3600) / 60))
+             if [ $rr -le 0 ]
+             then TIMELEFT='Expired!'
+             else TIMELEFT="$(printf '%d:%02d:%02d' $rh $rm $((rr%60)))"
+             fi
+             printf "${FMT}" \
+                    "${SLURM_JOB_ID}" \
+                    "${TAG}" \
+                    "${SLURM_HOSTNAME}" \
+                    "${DATESTR}" \
+                    "${TIMELEFT}"
+        fi
+   fi
+done
+
+# That's it!
+exit 0

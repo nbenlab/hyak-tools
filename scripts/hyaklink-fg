@@ -1,0 +1,95 @@
+#! /usr/bin/env bash
+###############################################################################
+# Script to foreground a hyaklink connection.
+# Uses ssh to connect to the remote host and open a local screen.
+# This is all done using exec screen -x <TAG> so detaching the screen exits
+# the connection.
+
+
+# Configuration ===============================================================
+
+# Load the hyaklink-init script.
+THISSCRIPT="$(command -v "${BASH_SOURCE[0]}")"
+THISDIR="$(dirname "${THISSCRIPT}")"
+source "${THISDIR}/hyaklink-init"
+
+# The help / syntax function.
+function HELP {
+    less <<EOF
+Syntax: hyaklink-fg [--config-dir=<DIR>] <LINK-NAME>
+
+The hyaklink-fg subcommand attaches a previously created hyaklink (node) to
+the current session using ssh and screen. Essentially, the command connects to
+the relevant remote node using ssh and opens a screen; when the user detaches
+the screen, context is returned to the login node. The following option can be
+provided:
+
+  --config-dir <directory> | --config-dir=<directory>
+  If one wishes to use a specific directory for storing hyaklink connection
+  metadata, provide it via this option. The default configuration directory is
+  $HOME/.hyak/hyaklink
+EOF
+}
+
+# We only allow a single tag to be set by command line; we give this variable
+# a value once it's been found in the argument list.
+TAG_SET=""
+
+
+# Arguments ===================================================================
+
+# Check for arguments we specifically take.
+while [ $# -gt 0 ]
+do case "$1"
+   in # Config-dir is handled by hyaklink-init so anything else is a tag.
+      *)
+          if [ -z "${TAG_SET}" ]
+          then TAG="$1"
+               TAG_SET=yes
+          else echo "Invalid argument: $1" 1>&2
+               exit 1
+          fi
+          ;;
+   esac
+   shift
+done
+
+# At this point, if we haven't been given a job name, we create a random name
+# then rename the job once it's been created. However, we might have been given
+# A TAG or an SBATCH_JOB_NAME or both.
+if [ -z "${TAG}" ]
+then echo "No hyaklink tag was given; syntax: hyaklink <link-id>" 1>&2
+     exit 1
+fi
+export TAG
+
+# We need to prepare to save the node metadata in the ~/.hyak/hyaklink
+# configuration directory.  First make sure the directory exists.
+if ! [ -d "${HYAKLINK_CONFIG_DIR}" ]
+then echo "Attempting to connect hyaklink using nonexistant config dir:" 1>&2
+     echo "${HYAKLINK_CONFIG_DIR}" 1>&2
+     exit 1
+fi
+# This is the file we'll use.
+ENVFILE="${HYAKLINK_CONFIG_DIR}/${TAG}.env"
+if ! [ -r "${ENVFILE}" ]
+then echo "No hyaklink file found for tag ${TAG} (${ENVFILE})" 1>&2
+     exit 1
+fi
+source "${ENVFILE}"
+
+
+# Connect to Node =============================================================
+
+# First we need to generate the list of port-forwarding arguments. We only do
+# this if another process isn't already opening the ports, though.
+SOCKFILE="${HYAKLINK_SOCKET_DIR}/${TAG}.sock"
+PORTARGS=()
+if ! [ -S "${SOCKFILE}" ]
+then for port in "${HYAKLINK_PORTS[@]}"
+     do PORTARGS+=("-L${port%:*}:localhost:${port%*:}")
+     done
+fi
+
+# We can just ssh to the node now.
+exec ssh "${PORTARGS[@]}" -t "${SLURM_HOSTNAME}" screen -x "${TAG}"

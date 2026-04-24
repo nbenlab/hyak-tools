@@ -1,0 +1,71 @@
+#! /usr/bin/env bash
+###############################################################################
+# Initialization script for the hyaklink tools.
+# This script isn't meant to be run or used by users; it's meant to be sourced
+# by the other hyaklink-* scripts in order to get basic info about them.
+
+
+# Sanity checking =============================================================
+
+if [ -n "${SLURM_JOB_ID}" ] && [ -z "${HYAKLINK_DEBUG}" ]
+then echo "You appear to be running hyaklink from a worker node/job;" 1>&2
+     echo "hyaklink is meant for use only on the login nodes." 1>&2
+     exit 1
+fi
+
+
+# Configuration Defaults ======================================================
+
+# The default slurm values:
+export SLURM_ACCOUNT="nbenlab"
+export SLURM_PARTITION="gpu-l40s"
+
+# The hyaklink configuration directory.
+# If not specified it defaults to ~/.hyak/hyaklink.
+# It can also be specified via command-line argument, which we handle below.
+HYAKLINK_CONFIG_DIR="${HYAKLINK_CONFIG_DIR:-${HOME}/.hyak/hyaklink}"
+
+
+# Command-line Arguments ======================================================
+
+# We need to scan the command-line arguments for the --config-dir option.
+scanned_args=()
+while [ $# -gt 0 ]
+do case "$1"
+   in --config-dir)
+          shift
+          HYAKLINK_CONFIG_DIR="$1"
+          ;;
+      --config-dir=*)
+          HYAKLINK_CONFIG_DIR="${1:13}"
+          ;;
+      --)
+          scanned_args+=("$@")
+          break
+          ;;
+      *)
+          scanned_args+=("$1")
+          ;;
+   esac
+   shift
+done
+export HYAKLINK_CONFIG_DIR
+# Reset script params:
+set -- "${scanned_args[@]}"
+
+# The hyaklink socket directory is a subdirectory of the config dir:
+# The hyaklink socket directory 
+HYAKLINK_SOCKET_DIR="${HYAKLINK_CONFIG_DIR}/sockets/${HOSTNAME}"
+if ! [ -d "${HYAKLINK_SOCKET_DIR}" ]
+then mkdir -p "${HYAKLINK_SOCKET_DIR}"
+     chmod 700 "${HYAKLINK_SOCKET_DIR}"
+fi
+
+
+# Path ========================================================================
+
+# We want to put the script dir on the path primarily.
+export PATH="${SCRIPT_DIR}:${PATH}"
+
+
+

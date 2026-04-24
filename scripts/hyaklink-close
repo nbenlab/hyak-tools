@@ -1,0 +1,93 @@
+#! /usr/bin/env bash
+###############################################################################
+# Script to close an open background hyaklink connection.
+
+
+# Configuration ===============================================================
+
+# Load the hyaklink-init script.
+THISSCRIPT="$(command -v "${BASH_SOURCE[0]}")"
+THISDIR="$(dirname "${THISSCRIPT}")"
+source "${THISDIR}/hyaklink-init"
+
+# The help / syntax function.
+function HELP {
+    less <<EOF
+Syntax: hyaklink-close [--config-dir=<DIR>] <LINK-NAME>
+
+The hyaklink-close subcommand is the opposite of the hyaklink-open command. If
+you have previously opened a hyaklink connection, this command will close the
+ports. If instead you want to end the job (not just disconnect your current
+login node from the remote ports), then you need to use the hyaklink-kill
+command. The following option is available:
+
+  --config-dir <directory> | --config-dir=<directory>
+  If one wishes to use a specific directory for storing hyaklink connection
+  metadata, provide it via this option. The default configuration directory is
+  $HOME/.hyak/hyaklink
+EOF
+}
+
+# We only allow a single tag to be set by command line; we give this variable
+# a value once it's been found in the argument list.
+TAG_SET=""
+
+
+# Arguments ===================================================================
+
+# Check for arguments we specifically take.
+while [ $# -gt 0 ]
+do case "$1"
+   in # hyaklink-init takes care of config-dir so anything else is a tag.
+      *)
+          if [ -z "${TAG_SET}" ]
+          then TAG="$1"
+               TAG_SET=yes
+          else echo "Invalid argument: $1" 1>&2
+               exit 1
+          fi
+          ;;
+   esac
+   shift
+done
+
+# At this point, if we haven't been given a job name, we create a random name
+# then rename the job once it's been created. However, we might have been given
+# A TAG or an SBATCH_JOB_NAME or both.
+if [ -z "${TAG}" ]
+then echo "No hyaklink tag was given; syntax: hyaklink-close <link-id>" 1>&2
+     exit 1
+fi
+export TAG
+
+# We need to prepare to save the node metadata in the ~/.hyak/hyaklink
+# configuration directory.  First make sure the directory exists.
+if ! [ -d "${HYAKLINK_CONFIG_DIR}" ]
+then echo "Attempting to connect hyaklink using nonexistant config dir:" 1>&2
+     echo "${HYAKLINK_CONFIG_DIR}" 1>&2
+     exit 1
+fi
+# This is the file we'll use.
+ENVFILE="${HYAKLINK_CONFIG_DIR}/${TAG}.env"
+if ! [ -r "${ENVFILE}" ]
+then echo "No hyaklink file found for tag ${TAG} (${ENVFILE})" 1>&2
+     exit 1
+fi
+source "${ENVFILE}"
+
+
+# Close the Connection ========================================================
+
+# We need to find the control socket so we can send it an exit message.
+HYAKLINK_SOCKET_DIR="${HYAKLINK_CONFIG_DIR}/sockets/${HOSTNAME}"
+SOCKFILE="${HYAKLINK_SOCKET_DIR}/${TAG}.sock"
+if ! [ -a "${SOCKFILE}" ]
+then echo "The hyaklink '${TAG}' was found, but it is not open." 1>&2
+     exit 1
+fi
+
+# It was found, so we kill it.
+ssh -S "${SOCKFILE}" -O exit "${SLURM_HOSTNAME}"
+
+# Assuming that worked, all is well!
+exit $?

@@ -1,0 +1,218 @@
+#! /usr/bin/env bash
+###############################################################################
+# Scipt to allocate a node and manage a screen instance on it.
+# This script was written for the nbenlab hyak account, but you can easily
+# update this for a different account using the configuration section.
+
+
+# Configuration ===============================================================
+
+# The hyaklink script specifically is meant to be linked into a bin directory
+# such that the original script file remains in the directory with the
+# subcommand scripts and the hyaklink-init meta-script.
+# If this isn't a symbolic link, then we have to assume that we're in the right
+# directory, so essentially, get the script file and follow links back to the
+# source file.
+SCRIPT_FILE="${BASH_SOURCE[0]}"
+while [ -L "${SCRIPT_FILE}" ]
+do DIR="$(cd -P "$(dirname "${SCRIPT_FILE}")" && pwd)"
+   SCRIPT_FILE="$(readlink "${SCRIPT_FILE}")"
+   case "${SCRIPT_FILE}"
+   in /*)  ;;
+      *) SCRIPT_FILE="${DIR}/${SCRIPT_FILE}" ;;
+   esac
+done
+SCRIPT_DIR="$(cd -P "$(dirname "$SCRIPT_FILE")" && pwd)"
+# Okay, let's make sure this directory contains hyaklink-init...
+if ! [ -r "${SCRIPT_DIR}/hyaklink-init" ]
+then cat 1>&2 <<EOF
+Could not find hyaklink-init meta-script!
+
+The hyaklink script is meant to be stored in a directory on your system with
+its companion scripts (hyaklink-new, hyaklink-fg, hyaklink-open,
+hyaklink-close, hyaklink-kill, and hyaklink-list) and the hyaklink-init
+meta-script. You may either symbolically link the hyaklink script to a
+directory on your path or you may put the directory containing all the scripts
+on your path. The author's expectation was that users would run something like
+this:
+   > cd ~/repos && git clone git@github.com:nbenlab/hyak-tools
+   # (Optional) Edit the hyak-tools/scripts/hyaklink-config script.
+   > ln -s ${HOME}/repos/hyak-tools/scripts/hyaklink ~/.local/bin/hyaklink
+
+In such a situation, the hyaklink command should be fully functional.  However,
+the hyaklink-init meta-script could not be found in your installation.
+EOF
+else source "${SCRIPT_DIR}/hyaklink-init"
+fi
+
+# The help / syntax function.
+function HELP {
+    cat <<EOF
+The hyaklink script is a convenience command for interacting with UW Hyak
+nodes through its SLURM system. The idea behind this command is that one
+typically wants to start some number of shells running different tools
+(potentially simultaneously) on the remote host, allocated via SLURM,
+potentially with some connections, like ports, mapped back to the login host.
+This command manages such allocations and links.
+
+The basic use case for this script is as follows:
+ (1) You need to allocate a node to run a job of some kind.
+     The hyaklink script includes default values for the ${SLURM_ACCOUNT}
+     Hyak account, but you can provide any slurm arguments to influence the
+     allocation. You can also provide arguments for ports (see below).
+       hyaklink start --time=4:00:00 --mem=64G
+     The above command allocates a node for 4 hours with the requested memory
+     then prints information about the allocated node then connects the link;
+     this consists of opening a screen session on the remote node running the
+     bash shell.
+ (2) You start some job(s) running then disconnect the screen.
+     Immediately on disconnecting the screen, you are returned to the login
+     host. The remote screen session (and job) remain active for the full time
+     determined by SLURM unless the screen session itself exits. For example,
+     if all shells/programs running in the screen sessions exit, then the
+     screen will end, and the job will prematurely end.
+ (3) You come back some time later to check on the progress.
+       hyaklink <link-name> [screen options...]
+     This opens the link (any ports if requested) and reattaches the screen
+     session on the remote host. If no options are provided after the link
+     name, then the screen is simply resumed. If any options are provided, then
+     the screen command is run on the remote host with exactly those
+     options. When you detach the screen, you are again returned to the login
+     node.
+ (4) The job ends.
+     You can resume the link using the resume command, if your bash processes
+     don't exit at the end of the script. When all of the screen windows have
+     exited, the screen session should end, and the job will terminate.
+     Alternatively, if you want to kill a job, you can use:
+       hyaklink kill <link-name>
+
+There are three additional commands supported by hyaklink:
+  * hyaklink open <link-name>
+    Opens the requested link without resuming the screen. The opened link is
+    automatically closed if the calling session ends (i.e., if you exit the
+    shell used to open the link).
+  * hyaklink close <link-name>
+    Closes the requested link, which must have been previously opened.
+  * hyaklink new [args...]
+    This command is exactly like the start command except that it does not open
+    the link or the screen. It just creates the allocation and the remote
+    screen session then prints information and returns.
+
+The hyak-start and hyak-new commands take many possible arguments. The vast
+majority of these arguments (in fact, any of the arguments not described in the
+immediately following section) are passed verbatim to the srun command. A few
+arguments are used by these commands to specify the kind of link that is
+needed. For example, if you are trying to open an ollama port on the remote
+host to your local login host and then to the computer you're using to connect
+with Hyak, you would want to route port 11434 from the worker node to a local
+unix domain socket (--port ollama.sock:11434) then use local forwarding in your
+ssh commection to forward the domain socket ollama.sock to your local port
+11434.
+
+  --port <port-spec> | --port=<port-spec>
+  The a port is always specified as a '<local>:<remote>' link. Either of these
+  may be a filename (for a unix domain socket) or a port number. Many ports may
+  be given on a single start or new command, and all ports are reopened when a
+  link is opened or resumed.
+
+  --command <command-string> | --comand=<command-string>
+  Provide a command string for the shell to run on the allocated node. The
+  command-string should be understood as in 'bash -c "command-string"'.
+
+  --
+  Any arguments appearing after the -- form a command that is to be executed on
+  the allocated node in the initial screen window. This is an alternative to
+  providing a '--command' argument. If neither is provided, then the shell is
+  run interactively without a command.
+
+  --config-dir <directory> | --config-dir=<directory>
+  If one wishes to use a specific directory for storing hyaklink connection
+  metadata, provide it via this option. Note that this option can be provided
+  to any hyaklink command. The default configuration directory is:
+  $HOME/.hyak/hyaklink
+
+
+
+For this script to work, one typically has to provide at minimum a value for
+the time option (e.g., '--time=1:00:00'). If no contravening environment
+variables or options are found then a default allocation of 32GB of ram and 8
+cpus is used.
+
+Warning: This command ignores the SLURM_ACCOUNT and SLURM_PARTITION environment
+variables and overwrites them with "nbenlab" and "gpu-l40s". It also forces the
+SLRURM_NTASKS and SLURM_NNODES environment variables to be 1. If you want to
+use this command with other accounts, partitions, tasks, or nodes, you must
+provide these as command-line arguments.
+EOF
+}
+
+
+# Argument Parsing ============================================================
+
+# Mostly we just want to extract the positional command argument, which must be
+# the first argument, assuming it has been provided.
+if [ $# -eq 0 ]
+then echo "Syntax: hyaklink <command>" 1>&2
+     echo "  See \`hyaklink help\` for details." 1>&2
+     exit 1
+fi
+
+CMD=()
+while [ "${#CMD[@]}" -eq 0 ]
+do case "$1"
+   in -h|--help|help)
+          HELP
+          exit 0
+          ;;
+      new)
+          export HYAKLINK_START=no
+          CMD=("hyaklink-new")
+          ;;
+      start)
+          export HYAKLINK_START=yes
+          CMD=("hyaklink-new")
+          ;;
+      open)
+          CMD=("hyaklink-open")
+          ;;
+      close)
+          CMD=("hyaklink-close")
+          ;;
+      list|ls)
+          CMD=("hyaklink-list")
+          ;;
+      kill)
+          CMD=("hyaklink-kill")
+          ;;
+      fg)
+          CMD=("hyaklink-fg")
+          ;;
+      --config-dir)
+          shift
+          export HYAKNODE_CONFIG_DIR="$1"
+          ;;
+      --config-dir=*)
+          shift
+          export HYAKNODE_CONFIG_DIR="${1:13}"
+          ;;
+      -*)
+          echo "Syntax: hyaklink <command>" 1>&2
+          echo "  The command connot start with a '-' character: $1" 1>&2
+          exit 1
+          ;;
+      *)
+          # This is a link to fg.
+          CMD=("hyaklink-fg" "$1")
+          ;;
+   esac
+   shift
+done
+
+# Anything left in the command-line is just part of the command we need to run.
+CMD+=("$@")
+
+
+# Run Subcommand ==============================================================
+
+# At this point, we have the subcommand picked out and we just need to run it.
+exec "${CMD[@]}"
