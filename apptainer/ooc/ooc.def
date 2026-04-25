@@ -1,0 +1,34 @@
+Bootstrap: docker
+From: nvcr.io/nvidia/nvhpc:25.11-devel-cuda_multi-rockylinux8
+
+%environment
+    export PATH="/gscratch/nbenlab/opt/opencode/bin:$PATH"
+    export OLLAMA_CONTEXT_LENGTH=81920
+    export OLLAMA_MODELS="/gscratch/nbenlab/opt/ollama/models"
+    export OLLAMA_LOGFILE=/dev/null
+
+%files
+    opencode-fwd.sh /usr/bin/opencode-fwd
+
+%post
+    dnf -y install socat zstd
+    # Ollama install
+    curl -OL https://github.com/ollama/ollama/releases/download/v0.15.6/ollama-linux-amd64.tar.zst
+    zstd -d ollama-linux-amd64.tar.zst
+    tar -C /usr -xf ollama-linux-amd64.tar
+    chmod 755 /usr/bin/opencode-fwd
+
+%runscript
+    # Make sure ollama is running.
+    curl http://localhost:11434 &>/dev/null
+    CURLVAL="$?"
+    if   [ $CURLVAL -eq 7 ]
+    then echo "Ollama server (http://localhost:11434) is not running." 1>&2
+         echo "Make sure to run `apptainer instance start ooc.sif ollama` first!" 1>&2
+	 exit 1
+    elif [ $CURLVAL -ne 0 ]
+    then echo "Unexpected error from `curl http://localhost:11434`: $CURLVAL"
+    	 exit 2
+    fi
+    # Start opencode.
+    ollama launch opencode "$@"
