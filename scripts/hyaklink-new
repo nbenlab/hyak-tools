@@ -85,6 +85,10 @@ export SBATCH_NNODES=1
 export SBATCH_NTASKS=1
 export SBATCH_INPUT=/dev/null
 
+# By default we start the hyaklink in the foreground (but with the --bg or -b
+# option we start it in the background instead.
+HYAKLINK_START="yes"
+
 # We only allow a single tag to be set by command line; we give this variable
 # a value once it's been found in the argument list.
 TAG_SET=""
@@ -108,6 +112,9 @@ do case "$1"
           ;;
       -P*)
           HYAKLINK_PORTS+=("${1:2}")
+          ;;
+      --bg|-b)
+          HYAKLINK_START="no"
           ;;
       # The SLURM options.
       --output|-o)
@@ -267,6 +274,18 @@ do case "$1"
       -C*)
           CMD=("bash", "-c", "${1:10}")
           ;;
+      # If there is a --shell then the following string is set to the screen
+      # shell, meaning that all new screen windows will run this command.
+      --shell|-s)
+          shift
+          SCREENSHELL="$1"
+          ;;
+      --shell=*)
+          SCREENSHELL="${1:8}"
+          ;;
+      -s*)
+          SCREENSHELL="${1:2}"
+          ;;
       # Help:
       --help|-h)
           HELP
@@ -309,9 +328,21 @@ export SBATCH_JOB_NAME
 # TAG is a shortcut for the job name:
 export TAG="${SBATCH_JOB_NAME}"
 
+# If a command prefix is defined, we insert that in front of the command.
+if [ -n "${HYAKLINK_NEW_COMMAND_PREFIX}" ]
+then CMD=("${HYAKLINK_NEW_COMMAND_PREFIX[@]}" "${CMD[@]}")
+fi
 # If the command is empty, we have a default command as well.
 if [ "${#CMD[@]}" -eq 0 ]
 then CMD=("bash" "-i")
+fi
+# If the screen shell isn't empty, we need to prepare it for splatting into the
+# screen command line.
+if [ -n "${SCREENSHELL}" ]
+then SCREENSHELL_EXP="export SHELL=\"${SCREENSHELL}\""
+     SCREENSHELL_ARG="-s \"${SCREENSHELL}\""
+else SCREENSHELL_EXP=""
+     SCREENSHELL_ARG=""
 fi
 
 # We need to prepare to save the node metadata in the ~/.hyak/hyaklink
@@ -399,7 +430,8 @@ function on_exit {
 trap on_exit EXIT
 
 # Go ahead and start the screen on this host.
-screen -dmS "\${TAG}" bash -c "
+${SCREENSHELL_EXP}
+screen -dmS "\${TAG}" ${SCREENSHELL_ARG} bash -c "
    SLURM_MEM=\$((SLURM_MEM_PER_NODE * 1024 * 1024))
    echo 'HyakLink Node Allocated:'
    echo \" - Name / ID:         \$SLURM_JOB_NAME / \$SLURM_JOB_ID\"
@@ -464,7 +496,7 @@ source "${ENVFILE}"
 TAG="${SLURM_JOB_NAME}"
 
 # Open the connection to the host if needed.
-hyaklink-open --config-dir="${HYAKLINK_CONFIG_DIR}" "${TAG}"
+hyaklink-open "${TAG}"
 
 # Finally print some info about the started job or fg the job.
 if [ -z "${HYAKLINK_START}" ] || [ "${HYAKLINK_START}" = "no" ]
@@ -485,5 +517,5 @@ then SLURM_MEM=$((SLURM_MEM_PER_NODE * 1024 * 1024))
      echo
      echo "To resume this session, run \`hyaklink ${TAG}\`."
      exit 0
-else exec hyaklink-fg --config-dir="${HYAKLINK_CONFIG_DIR}" "${TAG}"
+else exec hyaklink-fg "${TAG}"
 fi

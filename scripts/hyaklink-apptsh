@@ -1,0 +1,75 @@
+#!/usr/bin/env bash
+###############################################################################
+# Script to start apptainer shells in a hyaklink context.
+
+# This script gets called in two ways: (1) on the login node as a proxy for
+# hyaklink-new to set up a job and (2) as the shell program within a screen
+# session on the worker node. The use case of #1 is the script as intended, and
+# the use case of #2 is a hack to work around the fact that screen expects
+# screens to be individual programs without arguments.
+if [ -n "${SLURM_JOB_ID}" ]
+then if [ -z "${HYAKLINK_APPTSH_ARGS}" ]
+     then echo "You appear to be trying to run hyaklink-apptsh from a" 1>&2
+          echo "worker node. This command should only be run from the" 1>&2
+          echo "login nodes." 1>&2
+          exit 1
+     else exec apptainer shell ${HYAKLINK_APPTSH_ARGS}
+     fi
+fi
+
+
+# Configuration ===============================================================
+
+# Load the hyaklink-init script.
+THISSCRIPT="$(command -v "${BASH_SOURCE[0]}")"
+THISDIR="$(dirname "${THISSCRIPT}")"
+source "${THISDIR}/hyaklink-init"
+
+# The help / syntax function.
+function HELP {
+    less <<EOF
+Syntax: hyaklink-apptsh [hyaklink-new args] -- <image> [<apptainer args>]
+
+The hyaklink-apptsh subcommand simplifies running apptainer environments on
+hyak nodes. The apptainer image name provided is searched for in the APPTPATH
+environment variable if a valid relative or absolute path is not specified. It
+is required that a -- argument separate the hyaklink-new arguments from the
+apptainer image name and apptainer arguments.
+EOF
+}
+
+
+# Arguments ===================================================================
+
+# Find the apptainer arguments.
+APPTSH_ARGS=()
+HLNEW_ARGS=()
+while [ $# -gt 0 ]
+do case "$1"
+   in --)
+          # This means the remaining args are not for hyaklink-new.
+          # The rest are apptainer arguments.
+          shift
+          APPTSH_ARGS=("$@")
+          break
+          ;;
+      *)
+          # This is assumed to be for hyaklink-new
+          HLNEW_ARGS+=("$1")
+          ;;
+   esac
+   shift
+done
+# HYAKLINK_APPTSH_ARGS needs to be exported as a variable to the new job, and
+# arrays don't export well. We make this insto a quoted string for use in the
+# new shell instead.
+printf -v HYAKLINK_APPTSH_ARGS '%q ' "${APPTSH_ARGS[@]}"
+export HYAKLINK_APPTSH_ARGS
+export APPTAINERENV_PS1="$(source "${HOME}/.bashrc"; echo "[apptsh] ${PS1}";)"
+
+# Call down to hyaklink-new!
+exec hyaklink-new "${HLNEW_ARGS[@]}" \
+     --shell="${BASH_SOURCE[0]}" \
+     --export=HYAKLINK_APPTSH_ARGS,APPTAINERENV_PS1 \
+     -- "${BASH_SOURCE[0]}"
+

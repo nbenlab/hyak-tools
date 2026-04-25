@@ -201,8 +201,15 @@ do case "$1"
           exit 1
           ;;
       *)
-          # This is a link to fg.
-          CMD=("hyaklink-fg" "$1")
+          # This is one of three things: (1) an argument to a command that came
+          # earlier in the argument list, (2) an additional command that we
+          # find in our directory, (3) or a link-name to foreground.
+          if [ -x "${SCRIPT_DIR}/hyaklink-$1" ]
+          then # This is a command; run it.
+               CMD=("hyaklink-$1")
+          else # This is a link to fg.
+               CMD=("hyaklink-fg" "$1")
+          fi
           ;;
    esac
    shift

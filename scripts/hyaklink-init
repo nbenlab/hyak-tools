@@ -12,7 +12,10 @@
 export SLURM_ACCOUNT="${SLURM_ACCOUNT:-nbenlab}"
 export SLURM_PARTITION="${SLURM_PARTITION:-gpu-l40s}"
 
-# The hyaklink configuration directory.
+# The paths for apptainer environments.
+export APPTPATH="${APPTPATH:-/gscratch/nbenlab/apptainer}"
+
+# The user hyaklink configuration directory.
 # If not specified it defaults to ~/.hyak/hyaklink.
 # It can also be specified via command-line argument, which we handle below.
 HYAKLINK_CONFIG_DIR="${HYAKLINK_CONFIG_DIR:-${HOME}/.hyak/hyaklink}"
