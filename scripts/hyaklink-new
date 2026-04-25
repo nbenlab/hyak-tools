@@ -76,11 +76,14 @@ export SBATCH_GPUS_PER_TASK="${SBATCH_GPUS_PER_TASK:-0}"
 export SBATCH_MEM_PER_NODE="${SBATCH_MEM_PER_NODE:-32G}"
 export SBATCH_ACCOUNT="${SBATCH_ACCOUNT:-${SLURM_ACCOUNT:-nbenlab}}"
 export SBATCH_PARTITION="${SBATCH_PARTITION:-${SLURM_PARTITION:-gpu-l40x}}"
+export SBATCH_OUTPUT="${SBATCH_OUTPUT:-/dev/null}"
+export SBATCH_ERROR="${SBATCH_ERROR:-/dev/null}"
 
 # These variables don't respect their input values. This script doesn't do
 # array jobs or multiple tasks/nodes.
 export SBATCH_NNODES=1
 export SBATCH_NTASKS=1
+export SBATCH_INPUT=/dev/null
 
 # We only allow a single tag to be set by command line; we give this variable
 # a value once it's been found in the argument list.
@@ -107,6 +110,26 @@ do case "$1"
           HYAKLINK_PORTS+=("${1:2}")
           ;;
       # The SLURM options.
+      --output|-o)
+          shift
+          SLURM_ARGS+=("--output=$1")
+          ;;
+      --output=*)
+          SLURM_ARGS+=("$1")
+          ;;
+      -o*)
+          SLURM_ARGS+=("--output=${1:2}")
+          ;;
+      --error|-e)
+          shift
+          SLURM_ARGS+=("--error=$1")
+          ;;
+      --error=*)
+          SLURM_ARGS+=("$1")
+          ;;
+      -e*)
+          SLURM_ARGS+=("--error=${1:2}")
+          ;;
       --mem|-m)
           shift
           SLURM_ARGS+=("--mem=$1")
@@ -317,6 +340,26 @@ else export SBATCH_TIMELIMIT
      export SLURM_TIMELIMIT="${SBATCH_TIMELIMIT}"
 fi
 
+# Turn the ports into an easily-transferrable port string.
+PORTS=()
+for port in "${HYAKLINK_PORTS[@]}"
+do portLHS="${port%:*}"
+   portRHS="${port##*:}"
+   # If portLHS is a relative path, it should be relative to the
+   # HYAKLINK_SOCKET_PATH.
+   if [ "$portLHS" -eq "$portLHS" ] &>/dev/null
+   then # Port is a number; that's not how this is is supposed to work.
+        echo "Port spec is expected to use a unix domain socket (file)" 1>&2
+        echo "for the LHS: ${port}" 1>&2
+        exit 1
+   elif [ "${portLHS:0:1}" != "/" ]
+   then portLHS="${HOME}/${portLHS}"
+   fi
+   PORTS+=("${portLHS}:${portRHS}")
+done
+printf -v HYAKLINK_PORTSTRING "%q " "${PORTS[@]}"
+export HYAKLINK_PORTSTRING="${HYAKLINK_PORTSTRING% }"
+
 
 # Allocate Node ===============================================================
 
@@ -345,7 +388,7 @@ export TAG="\${SLURM_JOB_NAME}"
 # We also want to save our hostname.
 export SLURM_HOSTNAME="\$(hostname)"
 # We also want to save the ports.
-export SLURM_HYAKLINK_PORTS=(${HYAKLINK_PORTS[@]})
+export SLURM_HYAKLINK_PORTS="${HYAKLINK_PORTSTRING}"
 # Now we write our output metadata from the file. If we were 
 env | grep '^SLURM_' > "\${ENVFILE}"
 # Make sure we delete that envfile on exit!
@@ -391,6 +434,7 @@ function update_screen_prompt {
 while screen -list | grep -q "\.\${TAG}"
 do update_screen_prompt
    sleep 1
+   screen -wipe &>/dev/null
 done
 
 # The job ends here.
@@ -418,6 +462,9 @@ fi
 await_file "${ENVFILE}"
 source "${ENVFILE}"
 TAG="${SLURM_JOB_NAME}"
+
+# Open the connection to the host if needed.
+hyaklink-open --config-dir="${HYAKLINK_CONFIG_DIR}" "${TAG}"
 
 # Finally print some info about the started job or fg the job.
 if [ -z "${HYAKLINK_START}" ] || [ "${HYAKLINK_START}" = "no" ]

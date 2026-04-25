@@ -81,17 +81,23 @@ source "${ENVFILE}"
 
 # Connect to Node =============================================================
 
-# First we need to generate the list of port-forwarding arguments.
-PORTARGS=()
-for port in "${HYAKLINK_PORTS[@]}"
-do PORTARGS+=("-L${port%:*}:localhost:${port%*:}")
-done
-
 # We need to create a control socket so we can kill this later.
 SOCKFILE="${HYAKLINK_SOCKET_DIR}/${TAG}.sock"
+HYAKLINK_PORTS=(${SLURM_HYAKLINK_PORTS})
+PORTARGS=()
+if [ -S "${SOCKFILE}" ]
+then echo "hyaklink is already open for ${TAG}"
+     exit 0
+else for port in "${HYAKLINK_PORTS[@]}"
+     do PORTARGS+=("-L${port%:*}:localhost:${port##*:}")
+     done
+fi
+
 
 # We can start the ssh process in the background now.
-ssh -M -S "${SOCKFILE}" -f -N -o ExitOnForwardFailure=yes \
+ssh -M -S "${SOCKFILE}" -f -N \
+    -o ExitOnForwardFailure=yes \
+    -o StreamLocalBindUnlink=yes \
     "${PORTARGS[@]}" \
     "${SLURM_HOSTNAME}"
 

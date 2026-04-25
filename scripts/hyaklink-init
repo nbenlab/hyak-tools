@@ -5,6 +5,26 @@
 # by the other hyaklink-* scripts in order to get basic info about them.
 
 
+# Configuration Defaults ======================================================
+# Edit the values in this section to match your particular installation/group!
+
+# The default slurm values:
+export SLURM_ACCOUNT="${SLURM_ACCOUNT:-nbenlab}"
+export SLURM_PARTITION="${SLURM_PARTITION:-gpu-l40s}"
+
+# The hyaklink configuration directory.
+# If not specified it defaults to ~/.hyak/hyaklink.
+# It can also be specified via command-line argument, which we handle below.
+HYAKLINK_CONFIG_DIR="${HYAKLINK_CONFIG_DIR:-${HOME}/.hyak/hyaklink}"
+
+# When a unix domain socket is specified for a port, absolute paths are
+# respected, but what is the origin of relative paths?
+# For conveience, we use $HOME because then --port=.ollama.sock:11434 uses the
+# unix domain socket ~/.ollama.sock on the local host, and the SSH command line
+# argument becomes just -L 11434:.ollama.sock.
+HYAKLOCK_SOCKET_PATH="${HYAKLINK_SOCKET_PATH:-${HOME}}"
+
+
 # Sanity checking =============================================================
 
 if [ -n "${SLURM_JOB_ID}" ] && [ -z "${HYAKLINK_DEBUG}" ]
@@ -12,18 +32,6 @@ then echo "You appear to be running hyaklink from a worker node/job;" 1>&2
      echo "hyaklink is meant for use only on the login nodes." 1>&2
      exit 1
 fi
-
-
-# Configuration Defaults ======================================================
-
-# The default slurm values:
-export SLURM_ACCOUNT="nbenlab"
-export SLURM_PARTITION="gpu-l40s"
-
-# The hyaklink configuration directory.
-# If not specified it defaults to ~/.hyak/hyaklink.
-# It can also be specified via command-line argument, which we handle below.
-HYAKLINK_CONFIG_DIR="${HYAKLINK_CONFIG_DIR:-${HOME}/.hyak/hyaklink}"
 
 
 # Command-line Arguments ======================================================

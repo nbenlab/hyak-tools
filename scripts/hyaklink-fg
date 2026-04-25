@@ -84,12 +84,10 @@ source "${ENVFILE}"
 # First we need to generate the list of port-forwarding arguments. We only do
 # this if another process isn't already opening the ports, though.
 SOCKFILE="${HYAKLINK_SOCKET_DIR}/${TAG}.sock"
-PORTARGS=()
 if ! [ -S "${SOCKFILE}" ]
-then for port in "${HYAKLINK_PORTS[@]}"
-     do PORTARGS+=("-L${port%:*}:localhost:${port%*:}")
-     done
+then # We want to open the link first.
+     hyaklink-open "${TAG}"
 fi
 
 # We can just ssh to the node now.
-exec ssh "${PORTARGS[@]}" -t "${SLURM_HOSTNAME}" screen -x "${TAG}"
+exec ssh -t "${SLURM_HOSTNAME}" screen -x "${TAG}"
